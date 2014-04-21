@@ -969,7 +969,7 @@ status_t Camera2Client::startRecordingL(Parameters &params, bool restart) {
     }
 
     if (!restart) {
-        mCameraService->playSound(CameraService::SOUND_RECORDING);
+        mCameraService->playSound(CameraService::SOUND_RECORDING_STOP);
         mStreamingProcessor->updateRecordingRequest(params);
         if (res != OK) {
             ALOGE("%s: Camera %d: Unable to update recording request: %s (%d)",
