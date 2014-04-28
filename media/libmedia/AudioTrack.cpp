@@ -95,14 +95,13 @@ AudioTrack::AudioTrack()
     : mStatus(NO_INIT),
       mIsTimed(false),
       mPreviousPriority(ANDROID_PRIORITY_NORMAL),
-#ifdef QCOM_DIRECTTRACK
       mPreviousSchedulingGroup(SP_DEFAULT),
+#ifdef QCOM_DIRECTTRACK
       mAudioFlinger(NULL),
       mObserver(NULL),
-      mCblk(NULL)
-#else
-      mPreviousSchedulingGroup(SP_DEFAULT)
+      mCblk(NULL),
 #endif
+      mPausedPosition(0)
 {
 }
 
@@ -123,14 +122,13 @@ AudioTrack::AudioTrack(
     : mStatus(NO_INIT),
       mIsTimed(false),
       mPreviousPriority(ANDROID_PRIORITY_NORMAL),
-#ifdef QCOM_DIRECTTRACK
       mPreviousSchedulingGroup(SP_DEFAULT),
+#ifdef QCOM_DIRECTTRACK
       mAudioFlinger(NULL),
       mObserver(NULL),
-      mCblk(NULL)
-#else
-      mPreviousSchedulingGroup(SP_DEFAULT)
+      mCblk(NULL),
 #endif
+      mPausedPosition(0)
 {
     mStatus = set(streamType, sampleRate, format, channelMask,
             frameCount, flags, cbf, user, notificationFrames,
@@ -155,15 +153,14 @@ AudioTrack::AudioTrack(
     : mStatus(NO_INIT),
       mIsTimed(false),
       mPreviousPriority(ANDROID_PRIORITY_NORMAL),
-#ifdef QCOM_DIRECTTRACK
       mPreviousSchedulingGroup(SP_DEFAULT),
+#ifdef QCOM_DIRECTTRACK
       mProxy(NULL),
       mAudioFlinger(NULL),
       mObserver(NULL),
-      mCblk(NULL)
-#else
-      mPreviousSchedulingGroup(SP_DEFAULT)
+      mCblk(NULL),
 #endif
+      mPausedPosition(0)
 {
     mStatus = set(streamType, sampleRate, format, channelMask,
             0 /*frameCount*/, flags, cbf, user, notificationFrames,
@@ -746,10 +743,13 @@ void AudioTrack::pause()
     }
 #endif
 
-     if (isOffloaded()) {
-         sp<AudioTrackThread> t = mAudioTrackThread;
-         if (t != 0) t->pauseSync();
-     }
+    if (isOffloaded()) {
+        if (mOutput != 0) {
+            uint32_t halFrames;
+            AudioSystem::getRenderPosition(mOutput, &halFrames, &mPausedPosition);
+            ALOGV("AudioTrack::pause for offload, cache current position");
+        }
+    }
 }
 
 status_t AudioTrack::setVolume(float left, float right)
@@ -983,6 +983,12 @@ status_t AudioTrack::getPosition(uint32_t *position) const
     if (isOffloaded()) {
         uint32_t dspFrames = 0;
 
+        if ((mState == STATE_PAUSED) || (mState == STATE_PAUSED_STOPPING)) {
+            ALOGV("getPosition called in paused state, return cached position %u", mPausedPosition);
+            *position = mPausedPosition;
+            return NO_ERROR;
+        }
+
         if (mOutput != 0) {
             uint32_t halFrames;
             AudioSystem::getRenderPosition(mOutput, &halFrames, &dspFrames);
@@ -1113,6 +1119,12 @@ status_t AudioTrack::createTrack_l(
         mFlags = flags;
     }
     ALOGV("createTrack_l() output %d afLatency %d", output, afLatency);
+
+    if ((flags & AUDIO_OUTPUT_FLAG_FAST) && sampleRate != afSampleRate) {
+        ALOGW("AUDIO_OUTPUT_FLAG_FAST denied by client due to mismatching sample rate (%d vs %d)",
+              sampleRate, afSampleRate);
+        flags = (audio_output_flags_t) (flags & ~AUDIO_OUTPUT_FLAG_FAST);
+    }
 
     if ((flags & AUDIO_OUTPUT_FLAG_FAST) && sampleRate != afSampleRate) {
         ALOGW("AUDIO_OUTPUT_FLAG_FAST denied by client due to mismatching sample rate (%d vs %d)",
