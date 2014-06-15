@@ -188,6 +188,7 @@ struct OMXCodecObserver : public BnOMXObserver {
             codec->on_message(msg);
 
             bYieldToConsumer = codec->mIsEncoder &&
+                    !strncasecmp(codec->mMIME, "video/", 6) &&
                     (msg.type == omx_message::FILL_BUFFER_DONE ||
                     msg.type == omx_message::EMPTY_BUFFER_DONE);
             codec.clear();
@@ -2839,9 +2840,6 @@ void OMXCodec::on_message(const omx_message &msg) {
                     ATRACE_INT("Output buffers with OMXCodec", mFilledBuffers.size());
                     ATRACE_INT("Output Buffers with OMX client",
                             countBuffersWeOwn(mPortBuffers[kPortIndexOutput]));
-                }
-                if (mIsEncoder) {
-                    sched_yield();
                 }
             }
 
