@@ -486,6 +486,12 @@ status_t AudioTrack::set(
     }
     else {
 #endif
+
+    if (cbf != NULL) {
+        mAudioTrackThread = new AudioTrackThread(*this, threadCanCallJava);
+        mAudioTrackThread->run("AudioTrack", ANDROID_PRIORITY_AUDIO, 0 /*stack*/);
+    }
+
     // create the IAudioTrack
     status_t status = createTrack_l(streamType,
                                   sampleRate,
@@ -495,11 +501,6 @@ status_t AudioTrack::set(
                                   sharedBuffer,
                                   output,
                                   0 /*epoch*/);
-
-    if (cbf != NULL && status == NO_ERROR) {
-        mAudioTrackThread = new AudioTrackThread(*this, threadCanCallJava);
-        mAudioTrackThread->run("AudioTrack", ANDROID_PRIORITY_AUDIO, 0 /*stack*/);
-    }
 
     if (status != NO_ERROR) {
         if (mAudioTrackThread != 0) {
@@ -830,8 +831,12 @@ status_t AudioTrack::setSampleRate(uint32_t rate)
     if (AudioSystem::getOutputSamplingRate(&afSamplingRate, mStreamType) != NO_ERROR) {
         return NO_INIT;
     }
-    // Resampler implementation limits input sampling rate to 2 x output sampling rate.
-    if (rate == 0 || rate > afSamplingRate*2 ) {
+    // Resampler implementation limits input sampling rate to 2/4 x output sampling rate.
+#ifdef QTI_RESAMPLER
+    if (rate == 0 || rate > afSamplingRate * 4) {
+#else
+    if (rate == 0 || rate > afSamplingRate * 2) {
+#endif
         return BAD_VALUE;
     }
 
@@ -1140,17 +1145,13 @@ status_t AudioTrack::createTrack_l(
     }
     ALOGV("createTrack_l() output %d afLatency %d", output, afLatency);
 
+#ifdef NATIVE_FAST_TRACKS_ONLY
     if ((flags & AUDIO_OUTPUT_FLAG_FAST) && sampleRate != afSampleRate) {
         ALOGW("AUDIO_OUTPUT_FLAG_FAST denied by client due to mismatching sample rate (%d vs %d)",
               sampleRate, afSampleRate);
         flags = (audio_output_flags_t) (flags & ~AUDIO_OUTPUT_FLAG_FAST);
     }
-
-    if ((flags & AUDIO_OUTPUT_FLAG_FAST) && sampleRate != afSampleRate) {
-        ALOGW("AUDIO_OUTPUT_FLAG_FAST denied by client due to mismatching sample rate (%d vs %d)",
-              sampleRate, afSampleRate);
-        flags = (audio_output_flags_t) (flags & ~AUDIO_OUTPUT_FLAG_FAST);
-    }
+#endif
 
     // The client's AudioTrack buffer is divided into n parts for purpose of wakeup by server, where
     //  n = 1   fast track with single buffering; nBuffering is ignored
@@ -1644,10 +1645,7 @@ nsecs_t AudioTrack::processAudioBuffer(const sp<AudioTrackThread>& thread)
     // Currently the AudioTrack thread is not created if there are no callbacks.
     // Would it ever make sense to run the thread, even without callbacks?
     // If so, then replace this by checks at each use for mCbf != NULL.
-    if (mCblk == NULL) {
-        ALOGE("mCblk is NULL");
-        return NS_NEVER;
-    }
+    LOG_ALWAYS_FATAL_IF(mCblk == NULL);
 
     mLock.lock();
     if (mAwaitBoost) {
