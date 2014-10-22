@@ -40,6 +40,9 @@
 #ifdef ENABLE_AV_ENHANCEMENTS
 #include <QCMediaDefs.h>
 #include <QCMetaData.h>
+#endif
+
+#if defined(ENABLE_AV_ENHANCEMENTS) || defined(ENABLE_OFFLOAD_ENHANCEMENTS)
 #include "include/ExtendedUtils.h"
 #endif
 
@@ -596,24 +599,24 @@ bool canOffloadStream(const sp<MetaData>& meta, bool hasVideo, const sp<MetaData
     audio_offload_info_t info = AUDIO_INFO_INITIALIZER;
 
     int32_t bitWidth = 16;
-#ifdef ENABLE_AV_ENHANCEMENTS
+#if defined(ENABLE_AV_ENHANCEMENTS) || defined(ENABLE_OFFLOAD_ENHANCEMENTS)
     if (!meta->findInt32(kKeySampleBits, &bitWidth)) {
         ALOGV("bits per sample not set, using default %d", bitWidth);
     }
+    info.bit_width = bitWidth >= 24 ? 24 : bitWidth;
 #endif
-    info.bit_width = bitWidth;
 
     info.format = AUDIO_FORMAT_INVALID;
     if (mapMimeToAudioFormat(info.format, mime) != OK) {
         ALOGE(" Couldn't map mime type \"%s\" to a valid AudioSystem::audio_format !", mime);
         return false;
-    } else {
-#ifdef QCOM_HARDWARE
+    } else if (audio_is_linear_pcm(info.format) || audio_is_offload_pcm(info.format)) {
+#if defined(QCOM_HARDWARE) || defined(ENABLE_OFFLOAD_ENHANCEMENTS)
         // Override audio format for PCM offload
-        if (bitWidth == 24) {
+        if (bitWidth >= 24) {
             ALOGD("24-bit PCM offload enabled");
             info.format = AUDIO_FORMAT_PCM_24_BIT_OFFLOAD;
-        } else if (info.format == AUDIO_FORMAT_PCM_16_BIT) {
+        } else {
             info.format = AUDIO_FORMAT_PCM_16_BIT_OFFLOAD;
         }
 #endif
@@ -625,7 +628,7 @@ bool canOffloadStream(const sp<MetaData>& meta, bool hasVideo, const sp<MetaData
         return false;
     }
 
-    ALOGV("Mime type \"%s\" mapped to audio_format %d", mime, info.format);
+    ALOGV("Mime type \"%s\" mapped to audio_format 0x%x", mime, info.format);
 
     // check whether it is ELD/LD/main content -> no offloading
     // FIXME: this should depend on audio DSP capabilities. mapMimeToAudioFormat() should use the
@@ -678,31 +681,15 @@ bool canOffloadStream(const sp<MetaData>& meta, bool hasVideo, const sp<MetaData
     // bit rate, duration, video and streaming
     bool canOffload = AudioSystem::isOffloadSupported(info);
 
-#ifdef ENABLE_AV_ENHANCEMENTS
-    ExtendedUtils::updateOutputBitWidth(meta, canOffload);
+#if defined(ENABLE_AV_ENHANCEMENTS) || defined(ENABLE_OFFLOAD_ENHANCEMENTS)
+    // If we can't offload a 24-bit stream, we need to downgrade
+    // it to 16-bits. Codec will reconfigure for new bit width.
+    if (audio_is_offload_pcm(info.format)) {
+        ExtendedUtils::updateOutputBitWidth(meta, canOffload);
+    }
 #endif
 
     return canOffload;
-}
-
-void printFileName(int fd)
-{
-    if (fd) {
-        char symName[40] = {0};
-        char fileName[256] = {0};
-        snprintf(symName, sizeof(symName), "/proc/%d/fd/%d", getpid(), fd);
-
-        if (readlink( symName, fileName, (sizeof(fileName) - 1)) != -1 ) {
-            ALOGD("printFileName fd(%d) -> %s", fd, fileName);
-        }
-    }
-}
-
-void printFileName(const char *uri)
-{
-    if (uri) {
-        ALOGD("printFileName %s",uri);
-    }
 }
 
 }  // namespace android
